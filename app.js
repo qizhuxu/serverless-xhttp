@@ -18,24 +18,24 @@ const NAME = process.env.NAME || '';                       // 节点名称
 const PORT = process.env.PORT || 3000;                     // http服务
 const ENABLE_RATE_LIMIT = process.env.ENABLE_RATE_LIMIT !== 'false'; // 是否启用访问频率限制
 
-// 核心配置
+// 核心配置 - 针对 Cloud Foundry 优化
 const SETTINGS = {
     ['UUID']: UUID,              
     ['LOG_LEVEL']: 'none',       // 日志级别,调试使用,none,info,debug,warn,error
-    ['BUFFER_SIZE']: '8192',     // 缓冲区大小
+    ['BUFFER_SIZE']: '4096',     // 缓冲区大小 - 减小以适应平台限制
     ['XPATH']: `%2F${XPATH}`,    // xhttp路径 
-    ['MAX_BUFFERED_POSTS']: 50,  // 最大缓存POST请求数
-    ['MAX_POST_SIZE']: 2000000,  // 每个POST最大字节数到2MB
-    ['SESSION_TIMEOUT']: 30000,  // 会话超时时间(30秒)
-    ['CHUNK_SIZE']: 64 * 1024,   // 64KB 的数据块大小，更高效
+    ['MAX_BUFFERED_POSTS']: 20,  // 最大缓存POST请求数 - 减少内存占用
+    ['MAX_POST_SIZE']: 1000000,  // 每个POST最大字节数到1MB - 减小
+    ['SESSION_TIMEOUT']: 10000,  // 会话超时时间(10秒) - 缩短以适应平台
+    ['CHUNK_SIZE']: 16 * 1024,   // 16KB 的数据块大小 - 减小
     ['TCP_NODELAY']: true,       // 启用 TCP_NODELAY
-    ['TCP_KEEPALIVE']: true,     // 启用 TCP keepalive
-    ['SESSION_CLEANUP_INTERVAL']: 60000, // 会话清理间隔(60秒)
-    ['MAX_SESSION_AGE']: 300000,         // 最大会话存活时间(5分钟)
-    ['CONNECTION_POOL_SIZE']: 100,       // 连接池大小
-    ['WRITE_BUFFER_SIZE']: 64 * 1024,    // 写缓冲区大小
-    ['READ_BUFFER_SIZE']: 64 * 1024,     // 读缓冲区大小
-    ['BATCH_PROCESS_SIZE']: 10,          // 批处理大小
+    ['TCP_KEEPALIVE']: false,    // 禁用 TCP keepalive - CF不支持长连接
+    ['SESSION_CLEANUP_INTERVAL']: 30000, // 会话清理间隔(30秒) - 更频繁
+    ['MAX_SESSION_AGE']: 60000,          // 最大会话存活时间(1分钟) - 大幅缩短
+    ['CONNECTION_POOL_SIZE']: 20,        // 连接池大小 - 减少
+    ['WRITE_BUFFER_SIZE']: 16 * 1024,    // 写缓冲区大小 - 减小
+    ['READ_BUFFER_SIZE']: 16 * 1024,     // 读缓冲区大小 - 减小
+    ['BATCH_PROCESS_SIZE']: 5,           // 批处理大小 - 减少
     ['ENABLE_COMPRESSION']: false,       // 禁用压缩以提升速度
 }
 
@@ -1414,14 +1414,14 @@ function generatePadding(min, max) {
     return Buffer.from(Array(length).fill('X').join('')).toString('base64');
 }
 
-// 优化HTTP服务器设置
-server.keepAliveTimeout = 300000;  // 5分钟
-server.headersTimeout = 60000;     // 1分钟
-server.requestTimeout = 300000;    // 5分钟
-server.timeout = 300000;           // 5分钟
+// 优化HTTP服务器设置 - 针对 Cloud Foundry
+server.keepAliveTimeout = 10000;   // 10秒 - 大幅缩短
+server.headersTimeout = 5000;      // 5秒
+server.requestTimeout = 15000;     // 15秒 - 缩短
+server.timeout = 15000;            // 15秒 - 缩短
 
-// 最大连接数
-server.maxConnections = 1000;
+// 最大连接数 - 减少以适应平台限制
+server.maxConnections = 50;
 
 // 启用HTTP/2支持
 server.on('upgrade', (request, socket, head) => {
