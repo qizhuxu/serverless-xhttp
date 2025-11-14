@@ -8,12 +8,12 @@ const { Buffer } = require('buffer');
 const { exec } = require('child_process');
 
 // 环境变量
-const UUID = process.env.UUID || 'a2056d0d-c98e-4aeb-9aab-37f64edd5710'; // UUID
+const UUID = process.env.UUID || 'bb51cd5c-9813-48d3-9320-2b99bbf0a19a'; // UUID
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false;      // 是否开启自动访问保活,false为关闭,true为开启,需同时填写DOMAIN变量
 const XPATH = process.env.XPATH || UUID.slice(0, 8);       // xhttp路径,自动获取uuid前8位
-const SUB_PATH = process.env.SUB_PATH || 'sub';            // 节点订阅路径
-const SUB_TOKEN = process.env.SUB_TOKEN || '';             // 订阅访问令牌(可选,留空则不验证)
-const DOMAIN = process.env.DOMAIN || '';                   // 域名或ip,留空将自动获取服务器ip
+const SUB_PATH = process.env.SUB_PATH || 'qwedc';            // 节点订阅路径
+const SUB_TOKEN = process.env.SUB_TOKEN || 'qwedc1357908642';             // 订阅访问令牌(可选,留空则不验证)
+const DOMAIN = process.env.DOMAIN || 'appname.cfapps.ap21.hana.ondemand.com';                   // 域名或ip,留空将自动获取服务器ip
 const NAME = process.env.NAME || '';                       // 节点名称
 const PORT = process.env.PORT || 3000;                     // http服务
 const ENABLE_RATE_LIMIT = process.env.ENABLE_RATE_LIMIT !== 'false'; // 是否启用访问频率限制
