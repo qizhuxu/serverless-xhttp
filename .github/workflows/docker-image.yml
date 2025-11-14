@@ -1,14 +1,6 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'Dockerfile'
-      - 'app.js'
-      - 'package.json'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -39,7 +31,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/xhttp:latest
+            ghcr.io/${{ github.repository_owner }}/qiqi-x:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=XHTTP Server

@@ -8,16 +8,15 @@ const { Buffer } = require('buffer');
 const { exec } = require('child_process');
 
 // 环境变量
-const UUID = process.env.UUID || 'a2056d0d-c98e-4aeb-9aab-37f64edd5710'; // 使用哪吒v1，在不同的平台部署需修改UUID，否则会覆盖
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';       // 哪吒v1填写形式：nz.abc.com:8008   哪吒v0填写形式：nz.abc.com
-const NEZHA_PORT = process.env.NEZHA_PORT || '';           // 哪吒v1没有此变量，v0的agent端口为{443,8443,2096,2087,2083,2053}其中之一时开启tls
-const NEZHA_KEY = process.env.NEZHA_KEY || '';             // v1的NZ_CLIENT_SECRET或v0的agent端口  
+const UUID = process.env.UUID || 'a2056d0d-c98e-4aeb-9aab-37f64edd5710'; // UUID
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false;      // 是否开启自动访问保活,false为关闭,true为开启,需同时填写DOMAIN变量
 const XPATH = process.env.XPATH || UUID.slice(0, 8);       // xhttp路径,自动获取uuid前8位
 const SUB_PATH = process.env.SUB_PATH || 'sub';            // 节点订阅路径
+const SUB_TOKEN = process.env.SUB_TOKEN || '';             // 订阅访问令牌(可选,留空则不验证)
 const DOMAIN = process.env.DOMAIN || '';                   // 域名或ip,留空将自动获取服务器ip
 const NAME = process.env.NAME || '';                       // 节点名称
 const PORT = process.env.PORT || 3000;                     // http服务
+const ENABLE_RATE_LIMIT = process.env.ENABLE_RATE_LIMIT !== 'false'; // 是否启用访问频率限制
 
 // 核心配置
 const SETTINGS = {
@@ -146,105 +145,6 @@ function log(type, ...args) {
     }
 }
 
-const getDownloadUrl = () => {
-    const arch = os.arch(); 
-    if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') {
-      if (!NEZHA_PORT) {
-        return 'https://arm64.ssss.nyc.mn/v1';
-      } else {
-          return 'https://arm64.ssss.nyc.mn/agent';
-      }
-    } else {
-      if (!NEZHA_PORT) {
-        return 'https://amd64.ssss.nyc.mn/v1';
-      } else {
-          return 'https://amd64.ssss.nyc.mn/agent';
-      }
-    }
-};
-  
-const downloadFile = async () => {
-    if (!NEZHA_KEY) return;
-    try {
-      const url = getDownloadUrl();
-      // console.log(`Start downloading file from ${url}`);
-      const response = await axios({
-        method: 'get',
-        url: url,
-        responseType: 'stream'
-      });
-  
-      const writer = fs.createWriteStream('npm');
-      response.data.pipe(writer);
-  
-      return new Promise((resolve, reject) => {
-        writer.on('finish', () => {
-          console.log('npm download successfully');
-          exec('chmod +x npm', (err) => {
-            if (err) reject(err);
-            resolve();
-          });
-        });
-        writer.on('error', reject);
-      });
-    } catch (err) {
-      throw err;
-    }
-};
-  
-const runnz = async () => {
-    await downloadFile();
-    let NEZHA_TLS = '';
-    let command = '';
-  
-    if (NEZHA_SERVER && NEZHA_PORT && NEZHA_KEY) {
-      const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
-      NEZHA_TLS = tlsPorts.includes(NEZHA_PORT) ? '--tls' : '';
-      command = `nohup ./npm -s ${NEZHA_SERVER}:${NEZHA_PORT} -p ${NEZHA_KEY} ${NEZHA_TLS} >/dev/null 2>&1 &`;
-    } else if (NEZHA_SERVER && NEZHA_KEY) {
-      if (!NEZHA_PORT) {
-        const port = NEZHA_SERVER.includes(':') ? NEZHA_SERVER.split(':').pop() : '';
-        const tlsPorts = new Set(['443', '8443', '2096', '2087', '2083', '2053']);
-        const nezhatls = tlsPorts.has(port) ? 'true' : 'false';
-        const configYaml = `
-client_secret: ${NEZHA_KEY}
-debug: false
-disable_auto_update: true
-disable_command_execute: false
-disable_force_update: true
-disable_nat: false
-disable_send_query: false
-gpu: false
-insecure_tls: true
-ip_report_period: 1800
-report_delay: 4
-server: ${NEZHA_SERVER}
-skip_connection_count: true
-skip_procs_count: true
-temperature: false
-tls: ${nezhatls}
-use_gitee_to_upgrade: false
-use_ipv6_country_code: false
-uuid: ${UUID}`;
-        
-        fs.writeFileSync('config.yaml', configYaml);
-      }
-      command = `nohup ./npm -c config.yaml >/dev/null 2>&1 &`;
-    } else {
-      // console.log('NEZHA variable is empty, skip running');
-      return;
-    }
-  
-    try {
-      exec(command, { 
-        shell: '/bin/bash'
-      });
-      console.log('npm is running');
-    } catch (error) {
-      console.error(`npm running error: ${error}`);
-    } 
-};
-  
 // 添加自动任务
 async function addAccessTask() {
     if (AUTO_ACCESS !== true) return;
@@ -734,6 +634,56 @@ const performanceStats = {
     startTime: Date.now()
 };
 
+// 访问频率限制
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1分钟窗口
+const MAX_REQUESTS_PER_WINDOW = 100; // 每分钟最多100次请求
+
+function checkRateLimit(ip) {
+    if (!ENABLE_RATE_LIMIT) return true;
+    
+    const now = Date.now();
+    const record = rateLimitMap.get(ip) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+    
+    if (now > record.resetTime) {
+        record.count = 1;
+        record.resetTime = now + RATE_LIMIT_WINDOW;
+        rateLimitMap.set(ip, record);
+        return true;
+    }
+    
+    record.count++;
+    rateLimitMap.set(ip, record);
+    
+    return record.count <= MAX_REQUESTS_PER_WINDOW;
+}
+
+// 定期清理过期的频率限制记录
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of rateLimitMap.entries()) {
+        if (now > record.resetTime) {
+            rateLimitMap.delete(ip);
+        }
+    }
+}, RATE_LIMIT_WINDOW);
+
+// 可疑请求检测
+const suspiciousPatterns = [
+    /\.\./,           // 路径遍历
+    /<script/i,       // XSS
+    /union.*select/i, // SQL注入
+    /etc\/passwd/,    // 敏感文件
+    /\.env/,          // 环境文件
+    /admin/i,         // 管理路径
+    /wp-/i,           // WordPress扫描
+    /phpmyadmin/i,    // 数据库管理
+];
+
+function isSuspiciousRequest(url) {
+    return suspiciousPatterns.some(pattern => pattern.test(url));
+}
+
 // 内存监控和垃圾回收优化
 function monitorMemory() {
     const memUsage = process.memoryUsage();
@@ -1187,22 +1137,75 @@ Promise.all([
 
 // 创建http服务
 const server = http.createServer((req, res) => {
+    // 获取客户端IP
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0].trim() || 
+                     req.headers['x-real-ip'] || 
+                     req.socket.remoteAddress || 
+                     'unknown';
+    
+    // 检查访问频率限制
+    if (!checkRateLimit(clientIP)) {
+        log('warn', `Rate limit exceeded for IP: ${clientIP}`);
+        res.writeHead(429, { 'Content-Type': 'text/plain', 'Retry-After': '60' });
+        res.end('Too Many Requests');
+        return;
+    }
+    
+    // 检测可疑请求
+    if (isSuspiciousRequest(req.url)) {
+        log('warn', `Suspicious request detected from ${clientIP}: ${req.url}`);
+        // 返回正常的404，不暴露任何信息
+        res.writeHead(404, { 'Content-Type': 'text/html' });
+        res.end('<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>The requested URL was not found on this server.</p></body></html>');
+        return;
+    }
+    
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST',
         'Cache-Control': 'no-store',
         'X-Accel-Buffering': 'no',
         'X-Padding': generatePadding(100, 1000),
+        'Server': 'nginx/1.24.0', // 伪装成nginx
     };
 
     // 根路径和订阅路径
     if (req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Hello, World\n');
+        try {
+            const indexPath = './public/index.html';
+            if (fs.existsSync(indexPath)) {
+                const html = fs.readFileSync(indexPath, 'utf8');
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(html);
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end('Hello, World\n');
+            }
+        } catch (err) {
+            log('error', `Failed to serve index page: ${err.message}`);
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello, World\n');
+        }
         return;
     } 
     
-    if (req.url === `/${SUB_PATH}`) {
+    // 订阅路径 - 支持令牌验证
+    if (req.url.startsWith(`/${SUB_PATH}`)) {
+        // 如果设置了SUB_TOKEN，则需要验证
+        if (SUB_TOKEN) {
+            const urlParts = req.url.split('?');
+            const query = new URLSearchParams(urlParts[1] || '');
+            const token = query.get('token');
+            
+            if (token !== SUB_TOKEN) {
+                log('warn', `Invalid subscription token from ${clientIP}`);
+                // 返回普通404，不暴露订阅功能
+                res.writeHead(404, { 'Content-Type': 'text/html' });
+                res.end('<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>');
+                return;
+            }
+        }
+        
         const nodeName = NAME ? `${NAME}-${ISP}` : ISP;
         const vlessURL = `vless://${UUID}@${IP}:443?encryption=none&security=tls&sni=${IP}&alpn=h2%2Chttp%2F1.1&fp=chrome&allowInsecure=1&type=xhttp&host=${IP}&path=${SETTINGS.XPATH}&mode=packet-up#${nodeName}`; 
         const base64Content = Buffer.from(vlessURL).toString('base64');
@@ -1447,15 +1450,7 @@ server.on('error', (err) => {
     log('error', `Server error: ${err.message}`);
 });
 
-const delFiles = () => {
-    ['npm', 'config.yaml'].forEach(file => fs.unlink(file, () => {}));
-};
-
 server.listen(PORT, () => {
-    runnz ();
-    setTimeout(() => {
-      delFiles();
-    }, 300000);
     addAccessTask();
     log('info', `=================================`);
     log('info', `Log level: ${SETTINGS.LOG_LEVEL}`);
